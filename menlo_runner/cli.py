@@ -25,12 +25,12 @@ PROGRAMS = {
     "navigation-demo": ("menlo_runner.programs.navigation_demo", False),
     "agent-demo": ("menlo_runner.programs.agent_demo", True),
     "student-program": ("menlo_runner.programs.student_program", False),
-    "level-0-starter": ("menlo_runner.programs.project.en.level_0_starter", False),
-    "level-1-starter": ("menlo_runner.programs.project.en.level_1_starter", False),
-    "level-2-starter": ("menlo_runner.programs.project.en.level_2_starter", False),
-    "level-0-starter-ko": ("menlo_runner.programs.project.ko.level_0_starter_ko", False),
-    "level-1-starter-ko": ("menlo_runner.programs.project.ko.level_1_starter_ko", False),
-    "level-2-starter-ko": ("menlo_runner.programs.project.ko.level_2_starter_ko", False),
+    "level-0-starter": ("menlo_runner.programs.project.en.level_0_starter", True),
+    "level-1-starter": ("menlo_runner.programs.project.en.level_1_starter", True),
+    "level-2-starter": ("menlo_runner.programs.project.en.level_2_starter", True),
+    "level-0-starter-ko": ("menlo_runner.programs.project.ko.level_0_starter_ko", True),
+    "level-1-starter-ko": ("menlo_runner.programs.project.ko.level_1_starter_ko", True),
+    "level-2-starter-ko": ("menlo_runner.programs.project.ko.level_2_starter_ko", True),
 }
 
 

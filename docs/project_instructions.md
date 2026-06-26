@@ -121,6 +121,8 @@ All submitted agents may use:
 - Project-allowed SDK skills and helper functions
 - LLM outputs for high-level decision-making
 
+All project agents require both `MENLO_API_KEY` and `TOKAMAK_API_KEY` during development and evaluation. `MENLO_API_KEY` connects to the robot platform. `TOKAMAK_API_KEY` is required for the text LLM decision loop, and also for optional VLM calls.
+
 Additional information by level:
 
 | Data source or capability | Level 0 | Level 1 | Level 2 |

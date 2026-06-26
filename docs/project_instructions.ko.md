@@ -121,6 +121,8 @@ observe -> move briefly -> observe again -> correct or stop
 - 프로젝트에서 허용된 SDK skill과 helper function
 - 고수준 의사결정을 위한 LLM output
 
+모든 project agent는 개발과 평가에서 `MENLO_API_KEY`와 `TOKAMAK_API_KEY`가 모두 필요합니다. `MENLO_API_KEY`는 robot platform 연결에 사용합니다. `TOKAMAK_API_KEY`는 text LLM decision loop에 필요하며, 선택적으로 VLM을 사용할 때도 필요합니다.
+
 레벨별 추가 허용 범위:
 
 | 정보 또는 기능 | Level 0 | Level 1 | Level 2 |

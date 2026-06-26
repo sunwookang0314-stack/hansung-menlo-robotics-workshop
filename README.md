@@ -48,7 +48,7 @@ MENLO_API_KEY=...
 TOKAMAK_API_KEY=...
 ```
 
-`TOKAMAK_API_KEY` is only needed for LLM/VLM agent examples.
+`TOKAMAK_API_KEY` is required for Workshop 4 and for all project starter agents because the project requires an LLM-assisted decision loop.
 
 ## Run Workshop Demos
 
