@@ -1,4 +1,4 @@
-﻿# Menlo Robot Workshop Programs
+# Menlo Robot Workshop Programs
 
 [English](README.md) | [한국어](README.ko.md)
 
@@ -60,6 +60,12 @@ py -m menlo_runner.cli perception-demo
 py -m menlo_runner.cli navigation-demo
 py -m menlo_runner.cli agent-demo
 py -m menlo_runner.cli student-program
+py -m menlo_runner.cli level-0-starter
+py -m menlo_runner.cli level-1-starter
+py -m menlo_runner.cli level-2-starter
+py -m menlo_runner.cli level-0-starter-ko
+py -m menlo_runner.cli level-1-starter-ko
+py -m menlo_runner.cli level-2-starter-ko
 ```
 
 The demos create a simulated robot, print a viewer URL, wait for you to open it in Chrome, run the selected program, and then clean up the robot.
@@ -99,3 +105,16 @@ quit                     Disconnect, delete the robot, and exit
 Exercise solutions are intentionally not included. Complete the exercise cells in the
 student notebooks, or write the equivalent code in `student_program.py` when working in an IDE.
 
+For the final project, use the level-specific starters in `notebooks/project/`.
+
+English Python starters:
+
+- `menlo_runner/programs/project/en/level_0_starter.py`
+- `menlo_runner/programs/project/en/level_1_starter.py`
+- `menlo_runner/programs/project/en/level_2_starter.py`
+
+Korean Python starters:
+
+- `menlo_runner/programs/project/ko/level_0_starter_ko.py`
+- `menlo_runner/programs/project/ko/level_1_starter_ko.py`
+- `menlo_runner/programs/project/ko/level_2_starter_ko.py`
