@@ -350,7 +350,7 @@ async def run_agent(
             tracker.start_first_cycle()
             if first_cycle:
                 tracker.print_start()
-            reason = tracker.stop_reason(memory.delivered_count)
+            reason = await tracker.stop_reason_from_scene(ctx)
             if reason is not None:
                 tracker.mark_ended(reason)
                 print(f"Completion target reached before cycle action: {reason}.")
@@ -368,14 +368,14 @@ async def run_agent(
         update_memory(memory, observation, decision, verified)
         last_result = verified
         if tracker is not None:
-            reason = tracker.stop_reason(memory.delivered_count)
+            reason = await tracker.stop_reason_from_scene(ctx)
             if reason is not None:
                 tracker.mark_ended(reason)
                 print(f"Completion target reached after cycle action: {reason}.")
                 break
 
     if tracker is not None:
-        tracker.print_summary(memory.delivered_count)
+        await tracker.print_summary_from_scene(ctx)
     return memory
 
 

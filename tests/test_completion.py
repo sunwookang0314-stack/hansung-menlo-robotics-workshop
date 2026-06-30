@@ -1,4 +1,6 @@
+import asyncio
 import unittest
+from types import SimpleNamespace
 
 from menlo_runner.completion import CompletionConfig, CompletionTracker, level_from_program_name
 
@@ -12,6 +14,20 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+class FakeSceneContext:
+    async def state(self, name: str):
+        if name != "scene_state":
+            raise AssertionError(f"unexpected state read: {name}")
+        return SimpleNamespace(
+            entities={
+                "cube_0": SimpleNamespace(visible=False),
+                "cube_pool_0": SimpleNamespace(visible=False),
+                "cube_1": SimpleNamespace(visible=True),
+                "robot": SimpleNamespace(visible=True),
+            }
+        )
 
 
 class CompletionConfigTest(unittest.TestCase):
@@ -68,6 +84,13 @@ class CompletionTrackerTest(unittest.TestCase):
         tracker = CompletionTracker(CompletionConfig(level=2, max_elapsed_s=600))
 
         self.assertEqual(tracker.delivery_score(delivered_count=5), 150)
+
+    def test_stop_reason_from_scene_uses_authoritative_delivered_count(self):
+        tracker = CompletionTracker(CompletionConfig(max_delivered_cubes=2))
+
+        reason = asyncio.run(tracker.stop_reason_from_scene(FakeSceneContext()))
+
+        self.assertEqual(reason, "delivered 2/2 cubes")
 
 
 class ProgramLevelTest(unittest.TestCase):

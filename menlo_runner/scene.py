@@ -83,7 +83,6 @@ async def delivered_cube_ids(ctx: Any) -> list[str]:
         for eid, entity in scene.entities.items()
         if eid.startswith("cube_")
         and not entity.visible
-        and not str(eid).startswith("cube_pool")
     ]
 
 

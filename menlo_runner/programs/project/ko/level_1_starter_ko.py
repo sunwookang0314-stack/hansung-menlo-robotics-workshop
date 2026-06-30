@@ -21,6 +21,7 @@ from typing import Any
 from menlo_runner.completion import CompletionConfig, CompletionTracker
 from menlo_runner.llm import ask_vlm
 from menlo_runner.perception import detect_color_blobs
+from menlo_runner.scene import delivered_cube_ids, held_cube_info
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +192,9 @@ def build_decision_context(
 # ---------------------------------------------------------------------------
 # 지원 코드: project 규칙에 맞는 SDK wrapper
 # ---------------------------------------------------------------------------
-# 이 래퍼들은 프로젝트 규칙에 맞는 input만 노출합니다. 여기에 scene_state,
-# ground-truth coordinate, 정확한 cube ID, global asset map을 추가하지 마세요.
+# 이 래퍼들은 프로젝트 규칙에 맞는 input을 노출합니다. 아래 progress helper는
+# completion과 robot이 cube를 들고 있는지 추적할 수 있도록 허용됩니다.
+# Ground-truth coordinate, 정확한 target ID, global asset map은 추가하지 마세요.
 
 async def get_robot_status(ctx: Any) -> Any:
     """Robot pose, motion status, neck state를 읽습니다."""
@@ -202,6 +204,17 @@ async def get_robot_status(ctx: Any) -> Any:
 async def get_camera_frame(ctx: Any) -> bytes:
     """POV camera frame을 가져옵니다."""
     return await ctx.get_vision("pov")
+
+
+async def get_delivered_count(ctx: Any) -> int:
+    """공통 workshop progress helper로 delivered cube 수를 셉니다."""
+    return len(await delivered_cube_ids(ctx))
+
+
+async def get_held_cube_info(ctx: Any) -> dict[str, str] | None:
+    """Robot이 cube를 들고 있으면 현재 held cube id/color를 반환합니다."""
+    held = await held_cube_info(ctx)
+    return {"entity_id": held[0], "color": held[1]} if held else None
 
 
 def build_signage_vlm_prompt(held_color: str | None = None) -> str:
@@ -374,7 +387,14 @@ async def verify_outcome(ctx: Any, decision: AgentDecision, action_result: dict[
     - robot_status, camera evidence, SDK result status를 확인하세요.
     - 다음 LLM call이 recovery에 사용할 수 있는 정보를 반환하세요.
     """
-    return {"decision": decision.__dict__, "action_result": action_result}
+    held = await get_held_cube_info(ctx)
+    return {
+        "decision": decision.__dict__,
+        "action_result": action_result,
+        "delivered_count": await get_delivered_count(ctx),
+        "held_cube": held,
+        "held_color": held["color"] if held else None,
+    }
 
 
 def update_memory(
@@ -389,10 +409,16 @@ def update_memory(
     - completed cube, held color, failed attempt, recovery history를 추적하세요.
     - interim/final presentation에서 보여줄 수 있는 간결한 log를 남기세요.
     """
+    if "delivered_count" in verified:
+        memory.delivered_count = int(verified["delivered_count"])
+    memory.held_color = verified.get("held_color")
+
     memory.logs.append({
         "observation": {
             "visible_count": len(observation.detections),
             "note": observation.note,
+            "delivered_count": memory.delivered_count,
+            "held_color": memory.held_color,
         },
         "llm_decision": decision.__dict__,
         "verified": verified,
@@ -490,7 +516,7 @@ async def run_agent(
             tracker.start_first_cycle()
             if first_cycle:
                 tracker.print_start()
-            reason = tracker.stop_reason(memory.delivered_count)
+            reason = await tracker.stop_reason_from_scene(ctx)
             if reason is not None:
                 tracker.mark_ended(reason)
                 print(f"Completion target reached before cycle action: {reason}.")
@@ -508,14 +534,14 @@ async def run_agent(
         update_memory(memory, observation, decision, verified)
         last_result = verified
         if tracker is not None:
-            reason = tracker.stop_reason(memory.delivered_count)
+            reason = await tracker.stop_reason_from_scene(ctx)
             if reason is not None:
                 tracker.mark_ended(reason)
                 print(f"Completion target reached after cycle action: {reason}.")
                 break
 
     if tracker is not None:
-        tracker.print_summary(memory.delivered_count)
+        await tracker.print_summary_from_scene(ctx)
     return memory
 
 

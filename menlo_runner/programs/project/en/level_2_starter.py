@@ -24,6 +24,7 @@ from typing import Any
 from menlo_runner.completion import CompletionConfig, CompletionTracker
 from menlo_runner.llm import ask_vlm
 from menlo_runner.perception import detect_color_blobs
+from menlo_runner.scene import delivered_cube_ids, held_cube_info
 
 
 # ---------------------------------------------------------------------------
@@ -198,8 +199,9 @@ def build_decision_context(
 # ---------------------------------------------------------------------------
 # SUPPORT CODE: project-safe SDK wrappers
 # ---------------------------------------------------------------------------
-# These wrappers expose only project-safe inputs. Do not add scene_state,
-# ground-truth coordinates, exact cube IDs, or global asset maps here.
+# These wrappers expose project-safe inputs. The progress helpers below are
+# allowed so teams can track completion and whether the robot is holding a cube.
+# Do not add ground-truth coordinates, exact target IDs, or global asset maps here.
 
 async def get_robot_status(ctx: Any) -> Any:
     """Read robot pose, motion status, and neck state."""
@@ -209,6 +211,17 @@ async def get_robot_status(ctx: Any) -> Any:
 async def get_camera_frame(ctx: Any) -> bytes:
     """Capture the POV camera frame."""
     return await ctx.get_vision("pov")
+
+
+async def get_delivered_count(ctx: Any) -> int:
+    """Count delivered cubes using the shared workshop progress helper."""
+    return len(await delivered_cube_ids(ctx))
+
+
+async def get_held_cube_info(ctx: Any) -> dict[str, str] | None:
+    """Return the currently held cube id/color, if the robot is holding one."""
+    held = await held_cube_info(ctx)
+    return {"entity_id": held[0], "color": held[1]} if held else None
 
 
 def build_signage_vlm_prompt(held_color: str | None = None) -> str:
@@ -381,7 +394,14 @@ async def verify_outcome(ctx: Any, decision: AgentDecision, action_result: dict[
     - Check robot_status, camera evidence, and SDK result status.
     - Return information the next LLM call can use for recovery.
     """
-    return {"decision": decision.__dict__, "action_result": action_result}
+    held = await get_held_cube_info(ctx)
+    return {
+        "decision": decision.__dict__,
+        "action_result": action_result,
+        "delivered_count": await get_delivered_count(ctx),
+        "held_cube": held,
+        "held_color": held["color"] if held else None,
+    }
 
 
 def update_memory(
@@ -396,10 +416,16 @@ def update_memory(
     - Track completed cubes, held color, failed attempts, and recovery history.
     - Add concise logs that you can show during interim/final presentations.
     """
+    if "delivered_count" in verified:
+        memory.delivered_count = int(verified["delivered_count"])
+    memory.held_color = verified.get("held_color")
+
     memory.logs.append({
         "observation": {
             "visible_count": len(observation.detections),
             "note": observation.note,
+            "delivered_count": memory.delivered_count,
+            "held_color": memory.held_color,
         },
         "llm_decision": decision.__dict__,
         "verified": verified,
@@ -503,7 +529,7 @@ async def run_agent(
             tracker.start_first_cycle()
             if first_cycle:
                 tracker.print_start()
-            reason = tracker.stop_reason(memory.delivered_count)
+            reason = await tracker.stop_reason_from_scene(ctx)
             if reason is not None:
                 tracker.mark_ended(reason)
                 print(f"Completion target reached before cycle action: {reason}.")
@@ -521,14 +547,14 @@ async def run_agent(
         update_memory(memory, observation, decision, verified)
         last_result = verified
         if tracker is not None:
-            reason = tracker.stop_reason(memory.delivered_count)
+            reason = await tracker.stop_reason_from_scene(ctx)
             if reason is not None:
                 tracker.mark_ended(reason)
                 print(f"Completion target reached after cycle action: {reason}.")
                 break
 
     if tracker is not None:
-        tracker.print_summary(memory.delivered_count)
+        await tracker.print_summary_from_scene(ctx)
     return memory
 
 

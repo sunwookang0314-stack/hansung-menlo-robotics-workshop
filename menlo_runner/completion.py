@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 
 LEVEL_DELIVERY_POINTS = {
@@ -77,6 +77,16 @@ class CompletionTracker:
             return f"elapsed {self.elapsed_s():.1f}/{self.config.max_elapsed_s:.1f} seconds"
         return None
 
+    async def scene_delivered_count(self, ctx: Any) -> int:
+        """Read authoritative delivered-cube progress from scene_state."""
+        from menlo_runner.scene import delivered_cube_ids
+
+        return len(await delivered_cube_ids(ctx))
+
+    async def stop_reason_from_scene(self, ctx: Any) -> str | None:
+        """Check stop conditions using authoritative scene progress."""
+        return self.stop_reason(await self.scene_delivered_count(ctx))
+
     def delivery_score(self, delivered_count: int) -> int:
         return delivered_count * self.config.delivery_points()
 
@@ -112,6 +122,10 @@ class CompletionTracker:
             f"{reason}; elapsed={self.elapsed_s():.1f}s; delivered={delivered_count}; "
             f"delivery_score={self.delivery_score(delivered_count)}."
         )
+
+    async def print_summary_from_scene(self, ctx: Any) -> None:
+        """Print the completion summary using authoritative scene progress."""
+        self.print_summary(await self.scene_delivered_count(ctx))
 
 
 def level_from_program_name(program_name: str) -> int | None:
