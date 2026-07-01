@@ -18,6 +18,7 @@ is allowed only with coordinates estimated or recorded by the student system.
 import asyncio
 import json
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,6 +34,15 @@ from menlo_runner.scene import delivered_cube_ids, held_cube_info
 # Keep the task fixed. The challenge is to make one agent that handles different
 # cube-color orders and starting positions without source-code changes.
 TASK = "Find and sort cubes from the source area into their matching destination pads."
+
+# Model selection for notebook and Python starter users.
+# Edit this value or set MENLO_LLM_MODEL in your environment/.env before running.
+APPROVED_LLM_MODELS = (
+    "minimaxai/minimax-m3",
+    "minimaxai/minimax-m2.7",
+    "qwen/qwen3.6-35b-a3b",
+)
+LLM_MODEL = os.environ.setdefault("MENLO_LLM_MODEL", "minimaxai/minimax-m3")
 
 # Fixed signage is allowed information. Do not turn this into exact coordinates
 # or entity IDs; use it only to interpret observations.

@@ -15,6 +15,7 @@ Level 1 규칙: scene_state와 정확한 entity ID는 사용할 수 없습니다
 import asyncio
 import json
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,6 +31,15 @@ from menlo_runner.scene import delivered_cube_ids, held_cube_info
 # 과제 문장은 고정합니다. 목표는 cube 색상 순서와 시작 위치가 달라져도
 # 소스 코드 변경 없이 처리하는 하나의 agent를 만드는 것입니다.
 TASK = "Find and sort cubes from the source area into their matching destination pads."
+
+# Notebook/Python starter에서 사용할 LLM 모델 선택입니다.
+# 이 값을 바꾸거나 실행 전에 환경 변수/.env의 MENLO_LLM_MODEL을 설정하세요.
+APPROVED_LLM_MODELS = (
+    "minimaxai/minimax-m3",
+    "minimaxai/minimax-m2.7",
+    "qwen/qwen3.6-35b-a3b",
+)
+LLM_MODEL = os.environ.setdefault("MENLO_LLM_MODEL", "minimaxai/minimax-m3")
 
 # 고정 표지판 정보는 사용할 수 있습니다. 단, 이를 정확한 coordinate나 entity ID로
 # 바꾸지 말고 관찰을 해석하는 데만 사용하세요.

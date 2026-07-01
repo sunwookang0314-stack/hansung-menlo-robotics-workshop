@@ -123,6 +123,19 @@ All submitted agents may use:
 
 All project agents require both `MENLO_API_KEY` and `TOKAMAK_API_KEY` during development and evaluation. `MENLO_API_KEY` connects to the robot platform. `TOKAMAK_API_KEY` is required for the text LLM decision loop, and also for optional VLM calls.
 
+By default, `menlo_runner.llm.call_llm(...)` uses `minimaxai/minimax-m3`. Teams may choose another approved model without editing package source code:
+
+```python
+import os
+
+os.environ["MENLO_LLM_MODEL"] = "minimaxai/minimax-m3"
+# Approved alternatives:
+# os.environ["MENLO_LLM_MODEL"] = "minimaxai/minimax-m2.7"
+# os.environ["MENLO_LLM_MODEL"] = "qwen/qwen3.6-35b-a3b"
+```
+
+For notebook users, put this in a cell after setup and before the agent starts. Local IDE users may set `MENLO_LLM_MODEL` in `.env` or pass `model=...` directly to `call_llm(...)`.
+
 Additional information by level:
 
 | Data source or capability | Level 0 | Level 1 | Level 2 |

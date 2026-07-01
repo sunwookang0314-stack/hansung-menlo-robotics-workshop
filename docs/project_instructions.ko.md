@@ -119,6 +119,22 @@ observe -> move briefly -> observe again -> correct or stop
 robot platform 연결에 사용됩니다. `TOKAMAK_API_KEY`는 text LLM decision loop와 optional
 VLM call에 필요합니다.
 
+기본적으로 `menlo_runner.llm.call_llm(...)`은 `minimaxai/minimax-m3`를 사용합니다.
+팀은 package source code를 직접 수정하지 않고도 승인된 다른 모델을 선택할 수 있습니다.
+
+```python
+import os
+
+os.environ["MENLO_LLM_MODEL"] = "minimaxai/minimax-m3"
+# 승인된 다른 선택지:
+# os.environ["MENLO_LLM_MODEL"] = "minimaxai/minimax-m2.7"
+# os.environ["MENLO_LLM_MODEL"] = "qwen/qwen3.6-35b-a3b"
+```
+
+Notebook 사용자는 setup cell 실행 후 agent를 시작하기 전에 이 값을 설정하세요. Local IDE
+사용자는 `.env`에 `MENLO_LLM_MODEL`을 설정하거나 `call_llm(...)`에 `model=...`을 직접
+넘길 수 있습니다.
+
 Level별 추가 허용 정보:
 
 | Data source or capability | Level 0 | Level 1 | Level 2 |

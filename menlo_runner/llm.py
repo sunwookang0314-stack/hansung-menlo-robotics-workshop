@@ -7,29 +7,52 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 from typing import Any
 
 
 TOKAMAK_URL = "https://api.tokamak.sh/v1/chat/completions"
+DEFAULT_LLM_MODEL = "minimaxai/minimax-m3"
+DEFAULT_VLM_MODEL = "qwen/qwen3.6-35b-a3b"
+ALLOWED_LLM_MODELS = (
+    "minimaxai/minimax-m3",
+    "minimaxai/minimax-m2.7",
+    "qwen/qwen3.6-35b-a3b",
+)
+
+
+def get_llm_model(default: str = DEFAULT_LLM_MODEL) -> str:
+    """Return the configured text model for scripts and notebooks."""
+    model = os.environ.get("MENLO_LLM_MODEL", default).strip()
+    if model not in ALLOWED_LLM_MODELS:
+        allowed = ", ".join(ALLOWED_LLM_MODELS)
+        raise ValueError(f"MENLO_LLM_MODEL must be one of: {allowed}")
+    return model
+
+
+def get_vlm_model(default: str = DEFAULT_VLM_MODEL) -> str:
+    """Return the configured vision model for scripts and notebooks."""
+    return os.environ.get("MENLO_VLM_MODEL", default).strip()
 
 
 def call_llm(
     messages: list[dict[str, Any]],
     *,
     api_key: str,
-    model: str = "minimaxai/minimax-m2.7",
+    model: str | None = None,
     timeout_s: int = 120,
 ) -> str:
     import requests
 
+    selected_model = model or get_llm_model()
     response = requests.post(
         TOKAMAK_URL,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json={"model": model, "messages": messages},
+        json={"model": selected_model, "messages": messages},
         timeout=timeout_s,
     )
     response.raise_for_status()
@@ -42,7 +65,7 @@ def ask_vlm(
     prompt: str,
     *,
     api_key: str,
-    model: str = "qwen/qwen3.6-35b-a3b",
+    model: str | None = None,
 ) -> str:
     b64_image = base64.b64encode(jpeg_bytes).decode("utf-8")
     image_url = f"data:image/jpeg;base64,{b64_image}"
@@ -55,7 +78,7 @@ def ask_vlm(
             ],
         }
     ]
-    return call_llm(messages, api_key=api_key, model=model)
+    return call_llm(messages, api_key=api_key, model=model or get_vlm_model())
 
 
 def parse_tool_call(text: str) -> dict[str, Any] | None:

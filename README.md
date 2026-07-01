@@ -37,6 +37,21 @@ Required Colab secret names:
 - `MENLO_API_KEY`: your Menlo API key from `platform.menlo.ai` -> Settings -> API Keys
 - `TOKAMAK_API_KEY`: required for Workshop 4 and all project starter agents
 
+Optional LLM model override:
+
+```python
+import os
+
+os.environ["MENLO_LLM_MODEL"] = "minimaxai/minimax-m3"
+# Other approved choices:
+# os.environ["MENLO_LLM_MODEL"] = "minimaxai/minimax-m2.7"
+# os.environ["MENLO_LLM_MODEL"] = "qwen/qwen3.6-35b-a3b"
+```
+
+Put this in a notebook cell after setup and before the project agent runs. Local
+IDE users can set the same value in `.env` or pass `model=...` directly to
+`menlo_runner.llm.call_llm(...)`.
+
 ### Option 2: Local IDE With Starter Notebooks
 
 Use this option when the repository is cloned locally, but you still want to work
@@ -85,6 +100,7 @@ Copy `.env.example` to `.env` if present, or create `.env` with:
 ```text
 MENLO_API_KEY=...
 TOKAMAK_API_KEY=...
+MENLO_LLM_MODEL=minimaxai/minimax-m3
 ```
 
 `MENLO_API_KEY` comes from `platform.menlo.ai` -> Settings -> API Keys.
