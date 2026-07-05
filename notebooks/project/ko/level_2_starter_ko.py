@@ -2333,6 +2333,32 @@ async def _retreat_along_trace(
     )
 
 
+def _other_pad_here(
+    memory: AgentMemory | None,
+    held_color: str,
+    pose: dict[str, float],
+    *,
+    radius_m: float = PAD_ANCHOR_NEAR_M,
+) -> str | None:
+    """지금 위치 근처(radius)에 '다른' destination pad의 수확 anchor가 있으면 그 글자를 반환.
+
+    target 표지를 못 찾았는데 다른 pad가 바로 여기 있다면, target anchor가 오독으로 그 pad
+    위치에 박힌 것입니다(라이브: green→C인데 화면 끝 오독으로 C anchor가 실제 blue pad D
+    위치에 박혀 로봇이 D로 향함, 접근하니 수확이 D를 잡음). 강한 오독 신호입니다.
+    """
+    if memory is None:
+        return None
+    for color, e in memory.pad_memory.items():
+        if color == held_color or not isinstance(e, dict):
+            continue
+        a = e.get("anchor")
+        if not a:
+            continue
+        if math.hypot(float(a["x"]) - pose["x"], float(a["y"]) - pose["y"]) <= radius_m:
+            return DESTINATION_SIGN_RULES.get(color, color)
+    return None
+
+
 async def _harvest_other_signs(
     ctx: Any,
     signs: list[dict[str, Any]],
@@ -3026,9 +3052,32 @@ async def visual_navigate_to_pad(
             if face_turn is not None:
                 anchor_near_miss = 0
             elif anchor is not None:
-                # VLM 미검출이어도 anchor가 있으면 길을 잃지 않습니다: 블라인드 배회(전진/회전)
-                # 로 빠지지 않고 다음 반복에서 anchor 재조준을 계속합니다. 단 anchor 근접에서
-                # 미검출이 반복되면 점 추정이 오염/무효라는 뜻이므로 폐기(자가치유)합니다.
+                # ★오독 anchor 조기 폐기(라이브: 화면 끝 'C conf0.95'가 실은 blue pad D였고
+                #   로봇이 D 위치로 향함). 아래 두 신호 중 하나면 '이 anchor는 target이 아니다':
+                #   (a) 방금 look에서 '다른' destination pad를 지금 위치 근처에 수확 = 여기가 그 pad다.
+                #   (b) 중간 재확인(단일 목격 anchor로 근거리 도달)인데 target 미검출.
+                #   맹신을 끊고 '그 자리' 국소 탐색으로 실제 위치를 다시 잡는다(재확인이 이빨을 갖는다).
+                wrong_pad = _other_pad_here(memory, held_color, pose)
+                misread = (
+                    wrong_pad is not None
+                    or (need_reconfirm and int((anchor or {}).get("n", 0)) < 2)
+                )
+                if misread:
+                    entry["anchor"] = None
+                    note = (f"여기는 pad {wrong_pad}(다른 색)" if wrong_pad is not None
+                            else "중간 재확인 실패(단일 목격)")
+                    if verbose:
+                        print(f"           {note} -> target anchor 오독 폐기, 국소 탐색")
+                    _trace_step(memory, action="anchor_drop", pose=pose, note=note)
+                    if local_search_count < PAD_LOCAL_SEARCH_MAX:
+                        local_search_count += 1
+                        await _local_pad_search(
+                            ctx, letter, held_color, api_key, memory, entry,
+                            nav_start=nav_start, verbose=verbose,
+                        )
+                    continue
+                # VLM 미검출이어도 anchor가 있으면 블라인드 배회로 빠지지 않고 재조준을 계속합니다.
+                # 단 anchor 근접에서 미검출이 반복되면 점 추정이 오염/무효 → 폐기(자가치유).
                 if anchor_dist is not None and anchor_dist <= PAD_ANCHOR_NEAR_M:
                     anchor_near_miss += 1
                     if anchor_near_miss >= PAD_ANCHOR_NEAR_MISS_LIMIT:
