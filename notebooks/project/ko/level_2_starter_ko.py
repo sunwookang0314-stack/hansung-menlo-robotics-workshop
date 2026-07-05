@@ -2920,6 +2920,7 @@ async def visual_navigate_to_pad(
     nav_start = time.monotonic()
     no_color_turns = 0     # 목표색이 안 보여 회전한 연속 횟수(한 바퀴 넘으면 VLM 방향 1회).
     verify_fails = 0       # 색 후보 도착했으나 VLM 글자 검증 실패 누적(소스 A/오검출).
+    hard_stall = 0         # 국소 옆걸음으로도 못 뚫은 연속 횟수(측면 바이패스 escalate 트리거).
     detour_side = 1.0
 
     for attempt in range(PAD_OUTER_MAX):
@@ -2991,13 +2992,32 @@ async def visual_navigate_to_pad(
             if verbose:
                 print(f"  [pad {attempt}] 색 조준 angle={angle:+.0f}° area={area}")
             await _turn_by_deg(ctx, -angle)   # angle+ = 오른쪽 -> 오른쪽으로(음수 delta).
+            hard_stall = 0
         else:
             if verbose:
                 print(f"  [pad {attempt}] 색 접근 전진 area={area}")
             detour_side = 1.0 if angle <= 0 else -1.0   # 막히면 blob 쪽으로 옆걸음.
-            await _advance_or_detour(
+            if await _advance_or_detour(
                 ctx, detour_side, memory=memory, goal_turn_deg=-angle, verbose=verbose
-            )
+            ):
+                hard_stall = 0
+            else:
+                # ★국소 옆걸음으로도 못 뚫음 = 장애물에 wedge. 같은 자리서 또 시도하면 제자리
+                #   thrash(라이브 확정)이므로 '크게 우회'로 escalate: 목표 쪽으로 측면 바이패스
+                #   (여러 스텝 옆걸음), 그쪽도 막히면 반대쪽, 그래도 막히면 왔던 길로 후진해
+                #   접근각 자체를 바꾼다. 색 우선 nav에 이 escalation을 빠뜨린 게 wedge의 원인.
+                hard_stall += 1
+                chunks = min(PAD_BYPASS_MAX_CHUNKS, 2 + hard_stall)
+                bypass_side = 1.0 if angle <= 0 else -1.0   # 목표(색 blob) 쪽으로 우회.
+                if verbose:
+                    print(f"  [pad {attempt}] 국소 옆걸음 실패 {hard_stall}회 -> 측면 바이패스 {chunks}스텝")
+                if not await _lateral_bypass(ctx, bypass_side, chunks, memory=memory, verbose=verbose):
+                    if not await _lateral_bypass(ctx, -bypass_side, chunks, memory=memory, verbose=verbose):
+                        # 양쪽 다 막힘 → 왔던 길로 후진해 다른 접근각 확보(마지막 수단).
+                        if verbose:
+                            print(f"  [pad {attempt}] 양쪽 바이패스 실패 -> 후진(접근각 변경)")
+                        await _retreat_along_trace(ctx, memory, verbose=verbose)
+                        hard_stall = 0
         continue
 
     if verbose:
