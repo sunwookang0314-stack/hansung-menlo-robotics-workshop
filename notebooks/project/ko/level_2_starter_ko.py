@@ -3141,17 +3141,11 @@ async def visual_navigate_to_pad(
             stuck = 0   # 탈출 시도 후 다시 area로 진전 재측정.
             continue
 
-        # 4) 정상 접근: 안 중앙이면 blob 쪽으로 '아크(전진+회전)', 중앙이면 직진(막히면 옆걸음).
+        # 4) 정상 접근: 안 중앙이면 blob 쪽으로 회전, 중앙이면 전진(막히면 옆걸음, 방향은 latch).
         if abs(angle) > CENTER_TOLERANCE_DEG:
             if verbose:
-                print(f"  [pad {attempt}] 색 조준(아크 전진) angle={angle:+.0f}° area={area}")
-            # ★순수 회전(_turn_by_deg)은 전진이 없어 area가 안 커진다 → 같은 각도(-11°)에서 무한
-            #   조준 루프(라이브 확정). 큐브 접근처럼 '아크(vx+wz)'로 틀며 동시에 접근한다. 이 attempt도
-            #   '전진 시도'로 쳐서(advanced_last=True) 안 가까워지면 stuck→탈출(무한루프 차단).
-            wz = -ARC_WZ if angle > 0 else ARC_WZ   # blob 왼쪽(angle<0) → 좌회전(wz+).
-            await move_velocity(ctx, vx=ARC_VX, wz=wz, duration_s=0.6)
-            last_fwd_side = 1.0 if angle <= 0 else -1.0
-            advanced_last = True
+                print(f"  [pad {attempt}] 색 조준 angle={angle:+.0f}° area={area}")
+            await _turn_by_deg(ctx, -angle)   # angle+ = 오른쪽 -> 오른쪽으로(음수 delta).
         else:
             if verbose:
                 print(f"  [pad {attempt}] 색 접근 전진 area={area}")
