@@ -1025,6 +1025,17 @@ PAD_ANCHOR_MAX_REAIM_DEG = 90.0  # 한 반복의 anchor 재조준각 상한 — 
                                  # 큰 후방 회전을 두 반복에 나눠(회전→전진→재평가) 전도 위험을 줄임.
 PAD_ANCHOR_W_CAP = 6.0          # 융합 가중치 누적 상한 — 옛 목격 더미가 새(더 가까운) 목격을
                                 # 압도하지 못하게 해 잘못 초기화된 anchor도 재목격으로 씻겨나감.
+# --- 국소 탐색(anchor 근접 폐기 직후 '그 자리' 훑기)·복귀 게이트·중간 재확인 상수 ---
+# 라이브 회귀: 화면 끝 단일 목격으로 잘못 박힌 anchor로 0.74m까지 접근 → 폐기 → 그 순간
+# '목격 지점 복귀'가 출발점으로 173°·2.9m 되돌아가 7.2m 진전을 통째로 버림(배송 0).
+LS_RETURN_MAX_TURN_DEG = 90.0   # 복귀가 이보다 크게 돌아야 하면 '진전 되돌리기' → 복귀 금지, 국소 탐색.
+LS_RETURN_MAX_BACK_M = 2.0      # 복귀 후진 거리 상한 → 초과면 복귀 대신 국소 탐색.
+PAD_LOCAL_SEARCH_MAX = 2        # nav당 국소 탐색 발동 상한(무한 재탐색 방지).
+PAD_LOCAL_SEARCH_VLM_MAX = 4    # 국소 탐색 1회의 VLM 콜 상한(광각 3 + 여유 1). VLM은 지배 비용.
+PAD_LOCAL_SPIRAL_STEPS = 3      # 재획득 실패 시 훑을 나선 스텝 수(옆걸음+전진 1쌍씩, 반경 1~2m).
+ANCHOR_RECONFIRM_DIST_M = 2.0   # 단일 목격(n<2) anchor로 접근하다 이 거리에 처음 닿으면 VLM 1회
+                                # 재확인해 anchor 교정(가까울수록 거리추정 정확) — 0.74m까지 틀린 채
+                                # 가서야 폐기하던 것 방지.
 
 
 def _frame_width_from(detection: Any) -> float | None:
@@ -2564,6 +2575,90 @@ async def _look_for_sign(
     return sighting["face_turn"]
 
 
+async def _register_local_sighting(
+    ctx: Any,
+    entry: dict[str, Any] | None,
+    sighting: dict[str, Any],
+    *,
+    verbose: bool = False,
+) -> bool:
+    """국소 탐색이 얻은 sighting을 last_seen(+가능하면 anchor)으로 기록합니다.
+
+    _look_for_sign의 기록 규약과 동일. head 팬만 했으므로 지금 body pose가 곧 목격 pose입니다.
+    anchor는 근접 폐기 직후라 None → _fuse_anchor가 새 목격으로 신선하게 재초기화합니다.
+    """
+    if entry is None:
+        return False
+    pose = await _get_pose(ctx)
+    entry["last_seen"] = _make_last_seen(
+        pose, sighting["face_turn"],
+        confidence=sighting.get("confidence", 0.0),
+        position=sighting.get("position", ""),
+    )
+    conf = float(sighting.get("confidence", 0.0) or 0.0)
+    est_d = _estimate_sign_distance(sighting.get("bbox_area_frac"))
+    if est_d is not None and conf >= PAD_ANCHOR_MIN_CONF:
+        point = _project_point(pose, sighting["face_turn"], est_d)
+        entry["anchor"] = _fuse_anchor(entry.get("anchor"), point, _anchor_weight(conf, est_d))
+        if verbose:
+            a = entry["anchor"]
+            print(f"    [local] anchor 재설정 d≈{est_d:.1f}m -> ({a['x']:+.2f},{a['y']:+.2f})")
+    return True
+
+
+async def _local_pad_search(
+    ctx: Any,
+    letter: str,
+    held_color: str,
+    api_key: str,
+    memory: AgentMemory | None,
+    entry: dict[str, Any] | None,
+    *,
+    nav_start: float,
+    verbose: bool = False,
+) -> bool:
+    """anchor를 근접에서 폐기한 '그 자리'를 중심으로 표지를 국소 재탐색합니다(되돌아가지 않음).
+
+    폐기 지점은 '패드가 있을 거라 믿고 온' 곳이고 anchor 오차(1~2m)만큼 어긋났을 뿐 실제
+    pad는 근처일 공산이 큽니다. 출발점으로 173° 되돌아가 진전을 버리는 대신 지금 위치 반경
+    1~2m를 훑습니다. VLM은 지배 비용(30~40s/콜)이라 콜 수를 제한하고, 나선 스텝 사이엔 값싼
+    place probe(VLM 0)로 pad 옆 스침을 먼저 봅니다. 재획득 시 last_seen(+anchor) 갱신 후 True.
+    """
+    vlm_left = PAD_LOCAL_SEARCH_VLM_MAX
+    # 1) 제자리 광각 head 스캔(좌/중/우 3프레임 병렬 VLM). locomotion 0이라 위치를 안 잃습니다.
+    sighting = await _scan_pad_bearing_wide(
+        ctx, letter, held_color, api_key, memory=memory, verbose=verbose
+    )
+    vlm_left -= len(PAD_WIDE_SCAN_YAWS_RAD)
+    if sighting is not None:
+        if verbose:
+            print("    [local] 광각 스캔에서 표지 재획득 -> anchor 재설정")
+        return await _register_local_sighting(ctx, entry, sighting, verbose=verbose)
+    # 2) 못 찾으면 작은 나선: 옆걸음 1스텝 + 전진 1스텝을 좌/우 번갈아 반경 1~2m를 훑습니다.
+    for side in (1.0, -1.0, 1.0, -1.0)[:PAD_LOCAL_SPIRAL_STEPS]:
+        if time.monotonic() - nav_start > PAD_NAV_BUDGET_S:
+            if verbose:
+                print("    [local] 예산 초과 -> 국소 탐색 중단(상위 recover)")
+            break
+        await _strafe(ctx, side)                       # 몸 방향 유지 옆걸음(패드가 시야에 남음).
+        await _advance_or_detour(ctx, side, memory=memory, verbose=verbose)
+        probe_hit = await _place_probe(ctx, held_color, entry, memory)  # 값싼 후보 검사(VLM 0)
+        if vlm_left > 0:
+            sighting = await _scan_pad_bearing(
+                ctx, letter, held_color, api_key, memory=memory, verbose=verbose
+            )
+            vlm_left -= 1
+            if sighting is not None:
+                if verbose:
+                    print("    [local] 나선 스텝에서 표지 재획득 -> anchor 재설정")
+                return await _register_local_sighting(ctx, entry, sighting, verbose=verbose)
+        elif probe_hit and verbose:
+            print("    [local] place 후보 감지했으나 VLM 예산 소진 -> 상위 confirm 티어로")
+    if verbose:
+        print("    [local] 국소 탐색 실패(표지 미발견)")
+    return False
+
+
 async def _replay_route(
     ctx: Any,
     waypoints: list[dict[str, float]],
@@ -2786,6 +2881,8 @@ async def visual_navigate_to_pad(
     gate_veto_streak = 0   # anchor-거리 게이트 연속 veto 횟수(상한+낡음 때만 confirm 예외 허용).
     confirm_cooldown = 0   # confirm 실패 후 남은 재confirm 금지 전진 청크 수(VLM 스팸 차단).
     ls_return_used = False # 목격 지점 복귀는 nav당 1회만(무한 왕복 방지).
+    local_search_count = 0 # 이번 nav의 국소 탐색 발동 누계(PAD_LOCAL_SEARCH_MAX 상한).
+    anchor_reconfirmed = False  # 단일 목격 anchor 중간 재확인을 nav당 1회만 강제.
     detour_side = 1.0      # stall 우회 방향(+1=좌회전). target이 보이면 그쪽으로.
     detour_fails: dict[str, int] = {"left": 0, "right": 0}
     approach_history: list[dict[str, Any]] = []  # R6 관측: 반복별 {area, face_turn} 표본.
@@ -2811,8 +2908,20 @@ async def visual_navigate_to_pad(
         if anchor is not None:
             anchor_dist, anchor_turn = _face_turn_to(pose, anchor)
 
+        # ★단일 먼 목격 anchor 중간 교정: 접근 중 근거리(ANCHOR_RECONFIRM_DIST_M)에 처음 닿으면
+        #   goal-seek를 한 번 멈추고 VLM으로 재확인해 anchor를 갱신한다(가까울수록 거리추정 정확).
+        #   라이브: 화면 끝 1회 목격(n=1)만 믿고 0.74m까지 틀린 채 가서야 폐기 → 진전 소실.
+        need_reconfirm = (
+            anchor is not None and not anchor_reconfirmed
+            and anchor_dist is not None and anchor_dist <= ANCHOR_RECONFIRM_DIST_M
+            and int(anchor.get("n", 0)) < 2
+        )
+        if need_reconfirm:
+            anchor_reconfirmed = True   # 이번에 VLM으로 교정 → 다시 강제하지 않음.
+
         if (
-            anchor_turn is not None
+            not need_reconfirm
+            and anchor_turn is not None
             and anchor_dist is not None
             and anchor_dist > PAD_ANCHOR_NEAR_M
             and anchor_streak < PAD_ANCHOR_MAX_REUSE
@@ -2851,17 +2960,46 @@ async def visual_navigate_to_pad(
                 )
         else:
             if anchor is None and last_seen is not None and ls_turn is None and not ls_return_used:
-                # 4) 목격 지점 복귀: ray 신뢰반경 밖 -> 마지막으로 보인 pose로 되돌아가 재조준.
-                #    anchor가 있으면 생략 — 점 재조준은 어디서든 성립해 복귀 왕복이 낭비입니다.
-                ls_return_used = True
-                if verbose:
-                    print(
-                        f"  [pad {attempt}] last_seen 신뢰반경({LAST_SEEN_MAX_DRIFT_M}m) 밖"
-                        " -> 목격 지점으로 복귀"
+                # 4) 목격 지점 복귀 — 단, '진전 되돌리기' 방지 게이트를 먼저 통과해야 한다.
+                #    복귀가 큰 회전(>LS_RETURN_MAX_TURN_DEG)이나 긴 후진(>LS_RETURN_MAX_BACK_M)을
+                #    요구하면 어렵게 온 거리를 통째로 버리는 것(라이브 확정: 173°·2.9m 후진으로
+                #    출발점 복귀 → path 7.2m 소실·배송 0). 그런 경우엔 되돌아가지 말고 '지금 자리'
+                #    에서 국소 탐색으로 근처 표지를 훑는다(anchor 오차는 1~2m뿐).
+                ls_ret_dist, ls_ret_turn = _face_turn_to(pose, last_seen["pose"])
+                cheap_return = (
+                    ls_ret_dist <= LS_RETURN_MAX_BACK_M
+                    and abs(ls_ret_turn) <= LS_RETURN_MAX_TURN_DEG
+                )
+                if cheap_return:
+                    ls_return_used = True
+                    if verbose:
+                        print(
+                            f"  [pad {attempt}] last_seen 신뢰반경({LAST_SEEN_MAX_DRIFT_M}m) 밖"
+                            f" -> 목격 지점 복귀(근거리 {ls_ret_dist:.1f}m/{ls_ret_turn:+.0f}°)"
+                        )
+                    if await _replay_route(ctx, [last_seen["pose"]], memory, verbose=verbose):
+                        ls_streak = 0
+                        continue  # 복귀 성공: 다음 반복에서 last_seen ray 재사용.
+                elif local_search_count < PAD_LOCAL_SEARCH_MAX:
+                    # 진전 되돌리기 금지 → 그 자리 국소 탐색으로 대체(출발점 173° 복귀 차단).
+                    local_search_count += 1
+                    if verbose:
+                        print(
+                            f"  [pad {attempt}] 복귀가 진전 되돌리기"
+                            f"({ls_ret_dist:.1f}m/{ls_ret_turn:+.0f}°) -> 복귀 취소, 국소 탐색"
+                        )
+                    _trace_step(
+                        memory, action="local_search", pose=pose,
+                        note=f"branch4 대체 d={ls_ret_dist:.1f} turn={ls_ret_turn:.0f}",
                     )
-                if await _replay_route(ctx, [last_seen["pose"]], memory, verbose=verbose):
-                    ls_streak = 0
-                    continue  # 복귀 성공: 다음 반복에서 last_seen ray를 재사용.
+                    if await _local_pad_search(
+                        ctx, letter, held_color, api_key, memory, entry,
+                        nav_start=nav_start, verbose=verbose,
+                    ):
+                        ls_streak = 0
+                        anchor_streak = 0
+                        continue  # 재획득: 새 anchor/last_seen으로 접근 재개.
+                    ls_return_used = True  # 국소 탐색까지 실패 → 이 복귀 티어 소진.
             # 5) VLM look — 왜 여기까지 왔는지 사유를 남깁니다.
             if anchor is not None and anchor_dist is not None and anchor_dist <= PAD_ANCHOR_NEAR_M:
                 reason = f"anchor 근접(d={anchor_dist:.2f}m) -> VLM 확인"
