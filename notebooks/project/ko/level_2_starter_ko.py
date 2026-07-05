@@ -945,13 +945,17 @@ STRAFE_VY = 0.8               # 옆걸음 측면속도(+=좌). 클립 1.5의 절
 STRAFE_DUR = 1.3             # 옆걸음 한 스텝 시간(초).
 STRAFE_MIN_M = 0.15          # 이 미만 이동이면 옆걸음이 안 먹힌 것 -> 회전 우회 폴백.
 STRAFE_VX_ASSIST = 0.0       # 옆걸음 중 전진 성분(0=순수 측면. 앞이 막혔으니 전진은 재충돌 위험).
+STRAFE_MAX_STEPS = 5         # ★한 번의 막힘 탈출에서 '같은 방향으로' 옆걸음할 최대 횟수.
+                             # 사용자 지적: 몇 번만 더 가면 장애물 끝인데 전진 막혔다고 방향을
+                             # 뒤집어 제자리걸음이 됐다. 옆걸음이 먹히는 한 방향을 유지하고
+                             # 매 스텝 전진이 뚫리는지 확인 → 뚫리면 종료, 방향 전환은 옆도 막힐 때만.
 # 측면 우회(lateral bypass): 짧은 detour로도 못 뚫는 선형 구조물(벨트 등)에 반복해 막히면,
 # 표지 재조준을 잠시 멈추고 목표 쪽으로 ~90° 꺾어 여러 청크를 '따라 이동'해 구조물의 끝/틈을
 # 지나갑니다(표준 bug-following, 카메라·odometry만). 라이브 확정: pad가 벨트 너머라 직진
 # 접근만으론 x≈1.1에서 영구 고착 -> R6 비수렴 신호와 함께 escalate.
 PAD_BYPASS_STALL_TRIGGER = 2  # 연속 hard-stall(직진+detour 모두 실패)이 이만큼이면 측면 우회 발동.
 PAD_BYPASS_TURN_DEG = 80.0    # 측면 우회 시 목표 쪽으로 꺾는 각(구조물과 대략 평행하게 이동).
-PAD_BYPASS_MAX_CHUNKS = 4     # 한 번의 측면 우회에서 따라 이동할 최대 전진 청크 수(escalate 상한).
+PAD_BYPASS_MAX_CHUNKS = 6     # 한 번의 측면 우회에서 따라 이동할 최대 옆걸음 스텝(escalate 상한). 4→6.
 STALL_SPOT_RADIUS_M = 0.45    # 기억된 stall 지점 반경 — 이 안에서 같은 방향 전진이면 선제 우회.
 STALL_HEADING_TOL_DEG = 40.0  # stall '같은 방향' 판정 폭. 60→40: 목표가 45° 옆인 전진까지 동일
                               # 방향으로 묶여 선제 봉쇄되던 것 방지(라이브: anchor +45°에서 -50° 우회).
@@ -2133,21 +2137,36 @@ async def _advance_or_detour(
             )
     # ★막힘 탈출 = '회전'이 아니라 '옆걸음(vy)'을 먼저 쓴다(사용자 요구: 옆걸음 강화).
     #   몸 방향을 유지해 패드가 시야에 남고, 회전 우회보다 강하고 빠르다.
+    # ★막힘 탈출 = 옆걸음(vy)을 '같은 방향으로 끈질기게'. 옆으로 비킬 때마다 전진이 뚫리는지
+    #   확인하고, 뚫리면 즉시 종료. 전진이 아직 막혀도 '옆걸음이 계속 먹히는 한' 방향을 안 바꾼다
+    #   — 방향 전환은 옆걸음 자체가 벽에 막혔을 때만. (기존엔 옆걸음 1회 후 전진이 막히면 바로
+    #   방향을 뒤집어, 장애물 끝을 몇 스텝 앞두고 제자리걸음이 됐다 — 사용자 확정.)
     await move_velocity(ctx, vx=-0.2, duration_s=PAD_STALL_BACKUP_S)   # 접촉 해제(후진)
-    strafed = await _strafe(ctx, side)
-    if strafed >= STRAFE_MIN_M:
-        # 옆걸음이 먹혔다 → 이제 장애물 옆이니 방향 그대로 전진 한 청크.
-        if verbose:
-            print(f"           옆걸음(vy {_side_name(side)} {strafed:.2f}m) 성공 -> 전진 재개")
+    d0 = pose0
+    d1 = pose0
+    detour_moved = 0.0
+    detour_stalled = True
+    strafe_steps = 0
+    for _ in range(STRAFE_MAX_STEPS):
+        strafed = await _strafe(ctx, side)
+        if strafed < STRAFE_MIN_M:
+            break   # 그 방향 옆도 막힘 → 루프 종료(아래에서 폴백 or 방향전환 위임)
+        strafe_steps += 1
         d0 = await _get_pose(ctx)
         await move_velocity(ctx, vx=FORWARD_VX, duration_s=duration_s)
         d1 = await _get_pose(ctx)
         detour_moved = math.hypot(d1["x"] - d0["x"], d1["y"] - d0["y"])
         detour_stalled = _is_stalled(expected, detour_moved)
-    else:
-        # 옆걸음이 거의 안 먹힘(정책 미지원/옆도 막힘) → 기존 회전 우회로 폴백.
+        if not detour_stalled:
+            if verbose:
+                print(f"           옆걸음 {strafe_steps}회({_side_name(side)}) 후 전진 뚫림 {detour_moved:.2f}m")
+            break
         if verbose:
-            print(f"           옆걸음 약함({strafed:.2f}m) -> {side * PAD_STALL_DETOUR_DEG:+.0f}° 회전 우회 폴백")
+            print(f"           옆걸음 {strafe_steps}회({_side_name(side)}), 전진 여전히 막힘 -> 같은 방향 계속")
+    if strafe_steps == 0:
+        # 옆걸음이 처음부터 안 먹힘(정책 미지원/그 방향 즉시 벽) → 회전 우회 폴백.
+        if verbose:
+            print(f"           옆걸음 안 먹힘 -> {side * PAD_STALL_DETOUR_DEG:+.0f}° 회전 우회 폴백")
         await _turn_by_deg(ctx, side * PAD_STALL_DETOUR_DEG)
         d0 = await _get_pose(ctx)
         await move_velocity(ctx, vx=FORWARD_VX, duration_s=duration_s)
